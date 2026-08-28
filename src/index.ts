@@ -4,8 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { Server as SocketServer } from 'socket.io';
 import mongoose from 'mongoose';
-import admin from 'firebase-admin'; // Importação adicionada
-import serviceAccount from './serviceAccountKey.json'; // Importação do JSON
+import admin from 'firebase-admin';
 
 // Import das Rotas
 import twoFactorRoutes from './routes/twoFactorRoutes';
@@ -18,9 +17,11 @@ import User from './models/User';
 dotenv.config();
 console.log('🔑 STRIPE_SECRET_KEY:', process.env.STRIPE_SECRET_KEY ? '✅ CARREGADA' : '❌ NÃO ENCONTRADA');
 
-// Inicializar Firebase Admin
+// Inicializar Firebase Admin lendo da variável de ambiente
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT as string);
+
 admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount as admin.ServiceAccount)
+    credential: admin.credential.cert(serviceAccount)
 });
 
 const app = express();
