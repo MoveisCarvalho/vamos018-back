@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { verifyTwoFactorCode } from './twoFactorController';
 import admin from 'firebase-admin';
+import { AuthRequest } from '../middlewares/auth';
 
 // Registrar novo usuário
 export const register = async (req: Request, res: Response) => {
@@ -131,6 +132,26 @@ export const socialLogin = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Erro no login social:', error);
         res.status(500).json({ message: 'Erro interno no login social.' });
+    }
+};
+
+export const getMe = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.userId;
+        const user = await User.findById(userId).select('-password -resetToken -resetTokenExpiry -twoFactorSecret');
+        if (!user) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+        res.json({
+            id: user._id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            twoFactorEnabled: user.twoFactorEnabled
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Erro ao buscar usuário.' });
     }
 };
 

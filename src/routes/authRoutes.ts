@@ -1,13 +1,16 @@
 import { Router } from 'express';
-import { register, login, socialLogin, forgotPassword, resetPassword } from '../controllers/authController';
+import { register, login, socialLogin, forgotPassword, resetPassword, getMe } from '../controllers/authController';
+import { authenticate } from '../middlewares/auth';
 
 const router = Router();
 
-// Rotas públicas (não precisam de token)
 router.post('/register', register);
 router.post('/login', login);
-router.post('/social', socialLogin); // Login com Google/Facebook
+router.post('/social', socialLogin);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+
+// Rota protegida para obter dados do usuário
+router.get('/me', authenticate, getMe);
 
 export default router;
