@@ -35,7 +35,6 @@ export const quoteRide = async (req: AuthRequest, res: Response) => {
 export const requestRide = async (req: AuthRequest, res: Response) => {
     try {
         const passengerId = req.userId;
-        // [CORREÇÃO] Aceitando os valores vindos do frontend para manter consistência
         const { pickupLat, pickupLng, dropoffLat, dropoffLng, pickupAddress, dropoffAddress, distance: providedDistance, price: providedPrice } = req.body;
 
         if (!pickupLat || !pickupLng || !dropoffLat || !dropoffLng) {
@@ -58,13 +57,16 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
 
         await ride.save();
 
-        io.emit('new-ride-available', {
+        const rideData = {
             rideId: ride._id,
             pickup: ride.pickupLocation.coordinates,
             dropoff: ride.dropoffLocation.coordinates,
             distance: ride.distance,
             price: ride.price
-        });
+        };
+
+        console.log('📢 Emitindo nova corrida disponível:', rideData);
+        io.emit('new-ride-available', rideData);
 
         res.status(201).json({
             rideId: ride._id,
@@ -74,7 +76,7 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
             message: 'Corrida solicitada com sucesso!'
         });
     } catch (error) {
-        console.error(error);
+        console.error('Erro ao solicitar corrida:', error);
         res.status(500).json({ message: 'Erro ao solicitar corrida.' });
     }
 };
