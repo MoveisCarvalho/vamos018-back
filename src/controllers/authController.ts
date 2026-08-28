@@ -5,12 +5,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { verifyTwoFactorCode } from './twoFactorController';
-import admin from 'firebase-admin'; // Adicione esta importação
-
-// Inicializar o Firebase Admin (coloque isso no seu index.ts ou aqui no arquivo)
-// admin.initializeApp({ credential: admin.credential.applicationDefault() }); 
-// OU, se tiver o serviceAccountKey.json:
-// admin.initializeApp({ credential: admin.credential.cert(require('../path/to/serviceAccountKey.json')) });
+import admin from 'firebase-admin';
 
 // Registrar novo usuário
 export const register = async (req: Request, res: Response) => {
@@ -69,7 +64,6 @@ export const login = async (req: Request, res: Response) => {
 
         const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET as string, { expiresIn: '7d' });
 
-        // LOG para verificar a role vinda do banco
         console.log(`[LOGIN] Usuário: ${email}, Role no banco: ${user.role}`);
 
         res.json({
@@ -83,7 +77,7 @@ export const login = async (req: Request, res: Response) => {
 };
 
 // ==========================================
-// NOVA FUNÇÃO: Login Social (Google/Facebook)
+// Login Social (Google/Facebook)
 // ==========================================
 export const socialLogin = async (req: Request, res: Response) => {
     try {
@@ -93,31 +87,41 @@ export const socialLogin = async (req: Request, res: Response) => {
             return res.status(400).json({ message: 'Token do Firebase não fornecido.' });
         }
 
-        // Verificar token no Firebase Admin
-        const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
-        const firebaseUid = decodedToken.uid;
-        const firebaseEmail = decodedToken.email || email;
+        if (!admin.apps.length) {
+            console.error('Firebase Admin NÃO está inicializado.');
+            return res.status(500).json({ message: 'Erro de configuração do servidor.' });
+        }
 
+        let decodedToken;
+        try {
+            decodedToken = await admin.auth().verifyIdToken(firebaseToken);
+            console.log('[SOCIAL] Token verificado para:', decodedToken.email);
+        } catch (verifyError: any) {
+            console.error('Erro ao verificar token Firebase:', verifyError);
+            return res.status(401).json({ message: 'Token social inválido ou expirado.' });
+        }
+
+        const firebaseEmail = decodedToken.email || email;
         if (!firebaseEmail) {
             return res.status(400).json({ message: 'E-mail não fornecido pelo provedor social.' });
         }
 
-        // Procurar usuário pelo e-mail
         let user = await User.findOne({ email: firebaseEmail });
 
         if (!user) {
-            // Se não existir, cria um novo usuário
+            const userRole = (role === 'driver' || role === 'passenger') ? role : 'passenger';
             user = new User({
                 name: name || firebaseEmail.split('@')[0],
                 email: firebaseEmail,
-                // Senha aleatória (usuário não fará login com senha)
                 password: await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10),
-                role: role || 'passenger'
+                role: userRole
             });
             await user.save();
+            console.log(`[SOCIAL] Novo usuário criado: ${firebaseEmail}, role: ${userRole}`);
+        } else {
+            console.log(`[SOCIAL] Usuário existente: ${firebaseEmail}, role atual: ${user.role}`);
         }
 
-        // Gerar token JWT do seu sistema
         const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET as string, { expiresIn: '7d' });
 
         res.json({
@@ -126,7 +130,7 @@ export const socialLogin = async (req: Request, res: Response) => {
         });
     } catch (error) {
         console.error('Erro no login social:', error);
-        res.status(401).json({ message: 'Token social inválido ou expirado.' });
+        res.status(500).json({ message: 'Erro interno no login social.' });
     }
 };
 
@@ -140,7 +144,6 @@ const transporter = nodemailer.createTransport({
 });
 
 export const forgotPassword = async (req: Request, res: Response) => {
-    // ... (código original completo)
     try {
         const { email } = req.body;
         const user = await User.findOne({ email });
@@ -176,7 +179,6 @@ export const forgotPassword = async (req: Request, res: Response) => {
 };
 
 export const resetPassword = async (req: Request, res: Response) => {
-    // ... (código original completo)
     try {
         const { token, newPassword } = req.body;
         const user = await User.findOne({

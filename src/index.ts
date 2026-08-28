@@ -5,31 +5,68 @@ import dotenv from 'dotenv';
 import { Server as SocketServer } from 'socket.io';
 import mongoose from 'mongoose';
 import admin from 'firebase-admin';
+import fs from 'fs';
+import path from 'path';
 
-// Import das Rotas
 import twoFactorRoutes from './routes/twoFactorRoutes';
 import authRoutes from './routes/authRoutes';
 import rideRoutes from './routes/rideRoutes';
-
-// Import do modelo para o Socket
 import User from './models/User';
 
 dotenv.config();
 console.log('🔑 STRIPE_SECRET_KEY:', process.env.STRIPE_SECRET_KEY ? '✅ CARREGADA' : '❌ NÃO ENCONTRADA');
 
-// ===== INICIALIZAÇÃO SEGURA DO FIREBASE ADMIN =====
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+// ===== INICIALIZAÇÃO DO FIREBASE ADMIN =====
+let firebaseInitialized = false;
+
+// 1. Tenta carregar do arquivo local (prioridade para desenvolvimento)
+const localKeyPath = path.join(__dirname, 'serviceAccountKey.json');
+if (fs.existsSync(localKeyPath)) {
     try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT as string);
+        const fileContent = fs.readFileSync(localKeyPath, 'utf8');
+        const serviceAccount = JSON.parse(fileContent);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
         });
-        console.log('✅ Firebase Admin inicializado com sucesso.');
+        firebaseInitialized = true;
+        console.log('✅ Firebase Admin inicializado via arquivo local serviceAccountKey.json');
     } catch (error) {
-        console.error('❌ Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', error);
+        console.error('❌ Erro ao carregar serviceAccountKey.json:', error);
     }
-} else {
-    console.warn('⚠️  FIREBASE_SERVICE_ACCOUNT não definida. Login social (Google/Facebook) estará indisponível.');
+}
+
+// 2. Se falhou, tenta da variável de ambiente (para produção no Render)
+if (!firebaseInitialized) {
+    const firebaseServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (firebaseServiceAccount) {
+        try {
+            // Limpeza robusta: remove quebras de linha literais, caracteres de escape duplicados, etc.
+            let cleaned = firebaseServiceAccount
+                .replace(/\\n/g, '\n')        // converte \n literal para quebra real
+                .replace(/\n/g, '\\n')       // depois escapa todas as quebras para \n (string JSON válida)
+                .replace(/\r/g, '')           // remove CR
+                .trim();
+
+            // Se ainda houver caracteres de controle, tenta remover
+            cleaned = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+            const serviceAccount = JSON.parse(cleaned);
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            firebaseInitialized = true;
+            console.log('✅ Firebase Admin inicializado via variável de ambiente.');
+        } catch (error) {
+            console.error('❌ Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', error);
+            console.error('🔍 Conteúdo bruto (primeiros 200 caracteres):', firebaseServiceAccount.substring(0, 200));
+        }
+    } else {
+        console.warn('⚠️  Nenhuma credencial do Firebase encontrada. Login social indisponível.');
+    }
+}
+
+if (!firebaseInitialized) {
+    console.warn('⚠️  Firebase Admin NÃO foi inicializado. As rotas de login social retornarão erro 500.');
 }
 
 const app = express();
@@ -42,23 +79,19 @@ const io = new SocketServer(server, {
     }
 });
 
-// Middlewares
 app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
 app.use(express.json());
 app.use('/api/2fa', twoFactorRoutes);
 
-// Rota de saúde
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', message: 'Servidor Uber rodando!' });
+    res.json({ status: 'OK', message: 'Servidor rodando!' });
 });
 
-// Rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 
-// ==================== SOCKET.IO ====================
+// Socket.IO
 const userSockets: { [userId: string]: string } = {};
-
 io.on('connection', (socket) => {
     console.log('Novo cliente conectado:', socket.id);
 
@@ -93,8 +126,13 @@ io.on('connection', (socket) => {
 
 export { io };
 
-// Conectar ao MongoDB e subir servidor
-mongoose.connect(process.env.MONGO_URI as string)
+const mongoUri = process.env.MONGO_URI || process.env.MONGO_URL;
+if (!mongoUri) {
+    console.error('❌ Variável MONGO_URI ou MONGO_URL não definida!');
+    process.exit(1);
+}
+
+mongoose.connect(mongoUri)
     .then(() => {
         console.log('✅ Conectado ao MongoDB Atlas!');
         server.listen(process.env.PORT || 5000, () => {
