@@ -17,12 +17,20 @@ import User from './models/User';
 dotenv.config();
 console.log('🔑 STRIPE_SECRET_KEY:', process.env.STRIPE_SECRET_KEY ? '✅ CARREGADA' : '❌ NÃO ENCONTRADA');
 
-// Inicializar Firebase Admin lendo da variável de ambiente
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT as string);
-
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-});
+// ===== INICIALIZAÇÃO SEGURA DO FIREBASE ADMIN =====
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT as string);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log('✅ Firebase Admin inicializado com sucesso.');
+    } catch (error) {
+        console.error('❌ Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', error);
+    }
+} else {
+    console.warn('⚠️  FIREBASE_SERVICE_ACCOUNT não definida. Login social (Google/Facebook) estará indisponível.');
+}
 
 const app = express();
 const server = http.createServer(app);

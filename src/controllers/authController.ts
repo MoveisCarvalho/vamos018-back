@@ -69,6 +69,9 @@ export const login = async (req: Request, res: Response) => {
 
         const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET as string, { expiresIn: '7d' });
 
+        // LOG para verificar a role vinda do banco
+        console.log(`[LOGIN] Usuário: ${email}, Role no banco: ${user.role}`);
+
         res.json({
             token,
             user: { id: user._id, name: user.name, email: user.email, role: user.role }
