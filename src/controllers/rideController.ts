@@ -65,15 +65,17 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
 
         // Buscar motoristas online (isAvailable = true)
         const onlineDrivers = await User.find({ role: 'driver', isAvailable: true });
-        const onlineDriverIds = onlineDrivers.map(d => d._id.toString());
-
-        console.log('📢 Emitindo nova corrida disponível para motoristas online:', rideData);
+        console.log(`🔍 Motoristas online encontrados: ${onlineDrivers.length}`);
 
         // Emitir para cada motorista online via socket
-        onlineDriverIds.forEach(driverId => {
+        onlineDrivers.forEach(driver => {
+            const driverId = driver._id.toString();
             const socketId = userSockets[driverId];
             if (socketId) {
+                console.log(`📨 Emitindo para motorista ${driver.name} (${driverId}) via socket ${socketId}`);
                 io.to(socketId).emit('new-ride-available', rideData);
+            } else {
+                console.warn(`⚠️ Motorista ${driver.name} (${driverId}) não tem socket conectado.`);
             }
         });
 
@@ -107,7 +109,6 @@ export const acceptRide = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ message: 'Esta corrida já foi aceita ou cancelada.' });
         }
 
-        // Buscar passageiro para obter o nome
         const passenger = await User.findById(ride.passengerId);
         if (!passenger) {
             return res.status(404).json({ message: 'Passageiro não encontrado.' });
@@ -145,6 +146,7 @@ export const acceptRide = async (req: AuthRequest, res: Response) => {
         }
 
         // Notificar TODOS os motoristas que esta corrida não está mais disponível
+        console.log(`📢 Emitindo ride-unavailable para todos os motoristas: ${rideId}`);
         io.emit('ride-unavailable', { rideId: ride._id });
 
         // Retornar dados da corrida incluindo o nome do passageiro para o motorista
@@ -152,7 +154,7 @@ export const acceptRide = async (req: AuthRequest, res: Response) => {
             message: 'Corrida aceita com sucesso!',
             ride: {
                 ...ride.toObject(),
-                passengerName: passenger.name // adiciona o nome do passageiro
+                passengerName: passenger.name
             }
         });
     } catch (error) {

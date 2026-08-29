@@ -77,15 +77,22 @@ app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 
 // ==================== SOCKET.IO ====================
-export const userSockets: { [userId: string]: string } = {}; // EXPORTADO
+export const userSockets: { [userId: string]: string } = {};
 
 io.on('connection', (socket) => {
-    console.log('Novo cliente conectado:', socket.id);
+    console.log('🟢 Novo cliente conectado:', socket.id);
 
     socket.on('authenticate', (userId: string) => {
+        // Remove qualquer entrada antiga para este userId
+        for (const [key, value] of Object.entries(userSockets)) {
+            if (value === socket.id) {
+                delete userSockets[key];
+            }
+        }
         userSockets[userId] = socket.id;
         socket.data.userId = userId;
-        console.log(`Usuário ${userId} autenticado no socket (ID: ${socket.id})`);
+        console.log(`✅ Usuário ${userId} autenticado no socket (ID: ${socket.id})`);
+        console.log('📋 Sockets ativos:', Object.keys(userSockets));
     });
 
     socket.on('driver-location', async (data: { driverId: string, lat: number, lng: number }) => {
@@ -101,13 +108,15 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log('Cliente desconectado:', socket.id);
+        console.log('🔴 Cliente desconectado:', socket.id);
         for (const [userId, socketId] of Object.entries(userSockets)) {
             if (socketId === socket.id) {
                 delete userSockets[userId];
+                console.log(`🗑️ Removido usuário ${userId} dos sockets ativos`);
                 break;
             }
         }
+        console.log('📋 Sockets ativos após desconexão:', Object.keys(userSockets));
     });
 });
 
