@@ -19,46 +19,32 @@ console.log('🔑 STRIPE_SECRET_KEY:', process.env.STRIPE_SECRET_KEY ? '✅ CARR
 // ===== INICIALIZAÇÃO DO FIREBASE ADMIN =====
 let firebaseInitialized = false;
 
-// 1. Tenta carregar do arquivo local (prioridade para desenvolvimento)
-const localKeyPath = path.join(__dirname, 'serviceAccountKey.json');
-if (fs.existsSync(localKeyPath)) {
+const firebaseServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+if (firebaseServiceAccount) {
     try {
-        const fileContent = fs.readFileSync(localKeyPath, 'utf8');
-        const serviceAccount = JSON.parse(fileContent);
+        let cleaned = firebaseServiceAccount.replace(/\\n/g, '\n').trim();
+        const serviceAccount = JSON.parse(cleaned);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
         });
         firebaseInitialized = true;
-        console.log('✅ Firebase Admin inicializado via arquivo local serviceAccountKey.json');
+        console.log('✅ Firebase Admin inicializado via variável de ambiente.');
     } catch (error) {
-        console.error('❌ Erro ao carregar serviceAccountKey.json:', error);
+        console.error('❌ Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', error);
     }
-}
-
-// 2. Se falhou, tenta da variável de ambiente (para produção no Render)
-if (!firebaseInitialized) {
-    const firebaseServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (firebaseServiceAccount) {
+} else {
+    const localKeyPath = path.join(__dirname, 'serviceAccountKey.json');
+    if (fs.existsSync(localKeyPath)) {
         try {
-            // Limpeza robusta: remove quebras de linha literais, caracteres de escape duplicados, etc.
-            let cleaned = firebaseServiceAccount
-                .replace(/\\n/g, '\n')        // converte \n literal para quebra real
-                .replace(/\n/g, '\\n')       // depois escapa todas as quebras para \n (string JSON válida)
-                .replace(/\r/g, '')           // remove CR
-                .trim();
-
-            // Se ainda houver caracteres de controle, tenta remover
-            cleaned = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-
-            const serviceAccount = JSON.parse(cleaned);
+            const fileContent = fs.readFileSync(localKeyPath, 'utf8');
+            const serviceAccount = JSON.parse(fileContent);
             admin.initializeApp({
                 credential: admin.credential.cert(serviceAccount)
             });
             firebaseInitialized = true;
-            console.log('✅ Firebase Admin inicializado via variável de ambiente.');
+            console.log('✅ Firebase Admin inicializado via arquivo local serviceAccountKey.json');
         } catch (error) {
-            console.error('❌ Erro ao parsear FIREBASE_SERVICE_ACCOUNT:', error);
-            console.error('🔍 Conteúdo bruto (primeiros 200 caracteres):', firebaseServiceAccount.substring(0, 200));
+            console.error('❌ Erro ao carregar serviceAccountKey.json:', error);
         }
     } else {
         console.warn('⚠️  Nenhuma credencial do Firebase encontrada. Login social indisponível.');
@@ -90,15 +76,16 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 
-// Socket.IO
-const userSockets: { [userId: string]: string } = {};
+// ==================== SOCKET.IO ====================
+export const userSockets: { [userId: string]: string } = {}; // EXPORTADO
+
 io.on('connection', (socket) => {
     console.log('Novo cliente conectado:', socket.id);
 
     socket.on('authenticate', (userId: string) => {
         userSockets[userId] = socket.id;
         socket.data.userId = userId;
-        console.log(`Usuário ${userId} autenticado no socket`);
+        console.log(`Usuário ${userId} autenticado no socket (ID: ${socket.id})`);
     });
 
     socket.on('driver-location', async (data: { driverId: string, lat: number, lng: number }) => {

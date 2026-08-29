@@ -4,11 +4,10 @@ import User from '../models/User';
 import { calculateDistance, calculatePrice } from '../utils/distance';
 import { AuthRequest } from '../middlewares/auth';
 import mongoose from 'mongoose';
-import { io } from '../index';
+import { io, userSockets } from '../index';
 
 // ============ FUNÇÕES DO CONTROLADOR ============
 
-// [NOVO] Passageiro consulta o preço antes de confirmar
 export const quoteRide = async (req: AuthRequest, res: Response) => {
     try {
         const { pickupLat, pickupLng, dropoffLat, dropoffLng } = req.body;
@@ -31,7 +30,6 @@ export const quoteRide = async (req: AuthRequest, res: Response) => {
     }
 };
 
-// Passageiro solicita uma corrida
 export const requestRide = async (req: AuthRequest, res: Response) => {
     try {
         const passengerId = req.userId;
@@ -52,7 +50,7 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
             dropoffAddress,
             distance,
             price,
-            status: 'requested'
+            status: 'requested',
         });
 
         await ride.save();
@@ -65,8 +63,19 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
             price: ride.price
         };
 
-        console.log('📢 Emitindo nova corrida disponível:', rideData);
-        io.emit('new-ride-available', rideData);
+        // Buscar motoristas online (isAvailable = true)
+        const onlineDrivers = await User.find({ role: 'driver', isAvailable: true });
+        const onlineDriverIds = onlineDrivers.map(d => d._id.toString());
+
+        console.log('📢 Emitindo nova corrida disponível para motoristas online:', rideData);
+
+        // Emitir para cada motorista online via socket
+        onlineDriverIds.forEach(driverId => {
+            const socketId = userSockets[driverId];
+            if (socketId) {
+                io.to(socketId).emit('new-ride-available', rideData);
+            }
+        });
 
         res.status(201).json({
             rideId: ride._id,
@@ -81,7 +90,6 @@ export const requestRide = async (req: AuthRequest, res: Response) => {
     }
 };
 
-// Motorista aceita uma corrida
 export const acceptRide = async (req: AuthRequest, res: Response) => {
     try {
         const driverId = req.userId;
@@ -99,29 +107,60 @@ export const acceptRide = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ message: 'Esta corrida já foi aceita ou cancelada.' });
         }
 
+        // Buscar passageiro para obter o nome
+        const passenger = await User.findById(ride.passengerId);
+        if (!passenger) {
+            return res.status(404).json({ message: 'Passageiro não encontrado.' });
+        }
+
         ride.driverId = new mongoose.Types.ObjectId(driverId);
         ride.status = 'accepted';
         await ride.save();
 
-        const passengerSocketId = Object.keys(io.sockets.sockets).find(
-            (id) => io.sockets.sockets.get(id)?.data?.userId === ride.passengerId.toString()
-        );
+        const driverLocation = driver.location?.coordinates || [0, 0];
+        const passengerIdStr = ride.passengerId.toString();
+
+        // Notificar passageiro
+        const passengerSocketId = userSockets[passengerIdStr];
         if (passengerSocketId) {
+            const message = `${driver.name} aceitou sua corrida e está a caminho!`;
             io.to(passengerSocketId).emit('ride-accepted', {
                 rideId: ride._id,
-                driverId: ride.driverId,
-                message: 'Sua corrida foi aceita!'
+                driverId: driver._id,
+                driverName: driver.name,
+                driverLocation: {
+                    lat: driverLocation[1] || 0,
+                    lng: driverLocation[0] || 0
+                },
+                pickupLocation: {
+                    lat: ride.pickupLocation.coordinates[1],
+                    lng: ride.pickupLocation.coordinates[0]
+                },
+                dropoffLocation: {
+                    lat: ride.dropoffLocation.coordinates[1],
+                    lng: ride.dropoffLocation.coordinates[0]
+                },
+                message
             });
         }
 
-        res.json({ message: 'Corrida aceita com sucesso!', ride });
+        // Notificar TODOS os motoristas que esta corrida não está mais disponível
+        io.emit('ride-unavailable', { rideId: ride._id });
+
+        // Retornar dados da corrida incluindo o nome do passageiro para o motorista
+        res.json({
+            message: 'Corrida aceita com sucesso!',
+            ride: {
+                ...ride.toObject(),
+                passengerName: passenger.name // adiciona o nome do passageiro
+            }
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Erro ao aceitar corrida.' });
     }
 };
 
-// Motorista inicia a corrida
 export const startRide = async (req: AuthRequest, res: Response) => {
     try {
         const driverId = req.userId;
@@ -141,6 +180,16 @@ export const startRide = async (req: AuthRequest, res: Response) => {
         ride.status = 'in_progress';
         await ride.save();
 
+        const passengerIdStr = ride.passengerId.toString();
+        const passengerSocketId = userSockets[passengerIdStr];
+        if (passengerSocketId) {
+            const message = '🚗 Corrida iniciada! Aproveite a viagem.';
+            io.to(passengerSocketId).emit('ride-started', {
+                rideId: ride._id,
+                message
+            });
+        }
+
         res.json({ message: 'Corrida em andamento!', ride });
     } catch (error) {
         console.error(error);
@@ -148,7 +197,6 @@ export const startRide = async (req: AuthRequest, res: Response) => {
     }
 };
 
-// Finalizar corrida (motorista) - MODO SIMULADO (sem Stripe)
 export const completeRide = async (req: AuthRequest, res: Response) => {
     try {
         const driverId = req.userId;
@@ -169,6 +217,16 @@ export const completeRide = async (req: AuthRequest, res: Response) => {
         ride.paymentStatus = 'paid';
         await ride.save();
 
+        const passengerIdStr = ride.passengerId.toString();
+        const passengerSocketId = userSockets[passengerIdStr];
+        if (passengerSocketId) {
+            const message = '🏁 Corrida finalizada! Obrigado.';
+            io.to(passengerSocketId).emit('ride-completed', {
+                rideId: ride._id,
+                message
+            });
+        }
+
         res.json({
             message: 'Corrida finalizada com sucesso! (Pagamento simulado)',
             ride,
@@ -180,7 +238,61 @@ export const completeRide = async (req: AuthRequest, res: Response) => {
     }
 };
 
-// [NOVO] Motorista altera disponibilidade (Online/Offline)
+export const cancelRide = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.userId;
+        const { rideId } = req.params;
+        const { reason } = req.body;
+
+        const ride = await Ride.findById(rideId);
+        if (!ride) return res.status(404).json({ message: 'Corrida não encontrada.' });
+
+        const isPassenger = ride.passengerId.toString() === userId;
+        const isDriver = ride.driverId && ride.driverId.toString() === userId;
+
+        if (!isPassenger && !isDriver) {
+            return res.status(403).json({ message: 'Você não tem permissão para cancelar esta corrida.' });
+        }
+
+        if (ride.status === 'completed' || ride.status === 'cancelled') {
+            return res.status(400).json({ message: 'Esta corrida já foi finalizada ou cancelada.' });
+        }
+
+        let cancellationFee = 0;
+        if (isPassenger && (ride.status === 'accepted' || ride.status === 'in_progress')) {
+            if (reason !== 'justified') {
+                cancellationFee = ride.price * 0.5;
+            }
+        }
+
+        ride.status = 'cancelled';
+        ride.cancellationFee = cancellationFee;
+        await ride.save();
+
+        const otherUserId = isPassenger ? ride.driverId?.toString() : ride.passengerId.toString();
+        if (otherUserId) {
+            const otherSocketId = userSockets[otherUserId];
+            if (otherSocketId) {
+                io.to(otherSocketId).emit('ride-cancelled', {
+                    rideId: ride._id,
+                    message: `A corrida foi cancelada${cancellationFee > 0 ? ` (taxa de R$ ${cancellationFee.toFixed(2)})` : ''}.`
+                });
+            }
+        }
+
+        io.emit('ride-unavailable', { rideId: ride._id });
+
+        res.json({
+            message: 'Corrida cancelada com sucesso!',
+            cancellationFee,
+            ride
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Erro ao cancelar corrida.' });
+    }
+};
+
 export const toggleDriverAvailability = async (req: AuthRequest, res: Response) => {
     try {
         const driverId = req.userId;
@@ -201,7 +313,6 @@ export const toggleDriverAvailability = async (req: AuthRequest, res: Response) 
     }
 };
 
-// Listar minhas corridas
 export const getMyRides = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.userId;
@@ -221,7 +332,6 @@ export const getMyRides = async (req: AuthRequest, res: Response) => {
     }
 };
 
-// Atualizar localização do motorista (via REST)
 export const updateDriverLocation = async (req: AuthRequest, res: Response) => {
     try {
         const driverId = req.userId;

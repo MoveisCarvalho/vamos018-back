@@ -18,6 +18,7 @@ export interface IRide extends Document {
     price: number; // em reais (R$)
     paymentIntentId?: string; // ID do Stripe PaymentIntent
     paymentStatus: 'pending' | 'paid' | 'failed';
+    cancellationFee?: number; // NOVO
     createdAt: Date;
     updatedAt: Date;
 }
